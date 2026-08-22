@@ -1,0 +1,6 @@
+{
+  "name": "Journal Meditation Revelation",
+  "description": "Journal inspiration, revelation, insights from meditation and Wisdom Bank with astronomical data on Moon Phase and sign, Planetary Hour, Sun sign, Tattwas, and geolocation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
