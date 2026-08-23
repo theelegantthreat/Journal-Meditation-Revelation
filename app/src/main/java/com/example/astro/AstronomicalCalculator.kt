@@ -15,32 +15,36 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * AstroCalculator is a comprehensive astronomical and astrological calculation utility.
+ * AstronomicalCalculator is a dedicated utility object providing comprehensive mathematical algorithms
+ * and helper methods for celestial calculations:
  *
- * It provides precise mathematical algorithms to calculate:
- * 1. Moon Phases (synodic month progression, illumination percentage, phase type, moon sign)
- * 2. Planetary Hours (classical Chaldean order day and night hour rulers, proportional diurnal/nocturnal duration)
- * 3. Sun Signs (tropical zodiac ecliptic longitude, degrees, elements, modalities)
- * 4. Solar Times (sunrise, sunset, solar noon, dawn/dusk based on geographic coordinates)
- * 5. Tattwa Cycles (classical Vedic 24-minute elemental ether-to-earth rhythms)
+ * 1. Solar & Lunar Position Math (Julian Dates, Ecliptic Longitudes, Declination, Right Ascension, Solar Zenith)
+ * 2. Moon Phase & Illumination (Synodic cycle progression, Phase Type, Illumination %, Moon Sign & Degree)
+ * 3. Solar Ephemeris & Geolocation (Sunrise, Sunset, Solar Noon, Twilight based on Latitude & Longitude)
+ * 4. Planetary Hours (Chaldean Order day & night proportional hours anchored to local Sunrise & Sunset)
+ * 5. Tropical Zodiac Sun Sign calculations (Zodiac Sign, Degree, Modality, Element)
  */
-object AstroCalculator {
+object AstronomicalCalculator {
 
-    /** Default location coordinates (Mount Shasta, CA) */
+    /** Default reference coordinates: Mount Shasta, CA */
     const val DEFAULT_LATITUDE = 41.3099
     const val DEFAULT_LONGITUDE = -122.3106
     const val DEFAULT_LOCATION_NAME = "Mount Shasta, CA"
 
     /** Reference epoch: Known New Moon on Jan 6, 2000 at 18:14 UTC */
-    private const val EPOCH_NEW_MOON_MS = 947182440000L
-    /** Mean synodic month period in days */
-    private const val SYNODIC_MONTH_DAYS = 29.530588853
+    const val EPOCH_NEW_MOON_MS = 947182440000L
+    /** Mean synodic month period in days (29d 12h 44m 2.8s) */
+    const val SYNODIC_MONTH_DAYS = 29.530588853
     /** Milliseconds in a standard 24-hour day */
-    private const val MS_PER_DAY = 86400000.0
+    const val MS_PER_DAY = 86400000.0
+    /** J2000.0 epoch in Julian Days */
+    const val J2000_EPOCH_JD = 2451545.0
+    /** Standard civil atmospheric refraction zenith angle in degrees */
+    const val OFFICIAL_ZENITH_DEGREES = 90.8333
 
     /**
-     * Chaldean sequence of planetary rulers in descending order of classical cosmic sphere distance.
-     * Saturn -> Jupiter -> Mars -> Sun -> Venus -> Mercury -> Moon
+     * Classical Chaldean sequence of planets in descending planetary sphere order:
+     * Saturn (♄) -> Jupiter (♃) -> Mars (♂) -> Sun (☉) -> Venus (♀) -> Mercury (☿) -> Moon (☽)
      */
     val chaldeanOrder: List<Planet> = listOf(
         Planet.SATURN,
@@ -53,7 +57,7 @@ object AstroCalculator {
     )
 
     /**
-     * Day of the week to ruling planet mapping (Sunday = Sun, Monday = Moon, etc.)
+     * Mapping of standard Gregorian day of the week to the governing planetary regent.
      */
     val dayRulers: Map<Int, Planet> = mapOf(
         Calendar.SUNDAY to Planet.SUN,
@@ -66,14 +70,84 @@ object AstroCalculator {
     )
 
     // ============================================================================================
-    // MOON PHASE CALCULATIONS
+    // 1. SOLAR & LUNAR POSITION MATHEMATICAL HELPERS
     // ============================================================================================
 
     /**
-     * Calculates the Moon Phase, Illumination, and Moon Age for a given epoch timestamp.
+     * Converts a Unix timestamp in milliseconds to a Julian Day (JD) number.
+     */
+    fun toJulianDay(timestampMs: Long): Double {
+        return (timestampMs / MS_PER_DAY) + 2440587.5
+    }
+
+    /**
+     * Calculates the number of days elapsed since the J2000.0 epoch (Jan 1, 2000 12:00 UTC).
+     */
+    fun daysSinceJ2000(timestampMs: Long): Double {
+        return toJulianDay(timestampMs) - J2000_EPOCH_JD
+    }
+
+    /**
+     * Normalizes an angle in degrees into the [0.0, 360.0) range.
+     */
+    fun normalizeDegrees(degrees: Double): Double {
+        var normalized = degrees % 360.0
+        if (normalized < 0) normalized += 360.0
+        return normalized
+    }
+
+    /**
+     * Calculates the Sun's Mean Anomaly in degrees for a given day of the year estimate.
+     */
+    fun calculateSunMeanAnomaly(dayOfYearEstimate: Double): Double {
+        return normalizeDegrees((0.9856 * dayOfYearEstimate) - 3.289)
+    }
+
+    /**
+     * Calculates the Sun's True Tropical Ecliptic Longitude (λ) in degrees.
+     */
+    fun calculateSunEclipticLongitude(meanAnomalyDeg: Double): Double {
+        val mRad = Math.toRadians(meanAnomalyDeg)
+        val l = meanAnomalyDeg + (1.916 * sin(mRad)) + (0.020 * sin(2.0 * mRad)) + 282.634
+        return normalizeDegrees(l)
+    }
+
+    /**
+     * Calculates the Sun's Right Ascension (RA) in hours (0..24).
+     */
+    fun calculateSunRightAscensionHours(eclipticLongitudeDeg: Double): Double {
+        val lRad = Math.toRadians(eclipticLongitudeDeg)
+        var raDeg = Math.toDegrees(atan2(0.91764 * sin(lRad), cos(lRad)))
+        raDeg = normalizeDegrees(raDeg)
+        return raDeg / 15.0
+    }
+
+    /**
+     * Calculates the Sun's Declination (δ) in radians.
+     */
+    fun calculateSunDeclinationRad(eclipticLongitudeDeg: Double): Double {
+        val sinDec = 0.39782 * sin(Math.toRadians(eclipticLongitudeDeg))
+        return asin(sinDec)
+    }
+
+    /**
+     * Calculates the Moon's approximate mean tropical ecliptic longitude in degrees.
+     */
+    fun calculateMoonEclipticLongitude(timestampMs: Long): Double {
+        val d = daysSinceJ2000(timestampMs)
+        val l = 218.316 + (13.176396 * d)
+        return normalizeDegrees(l)
+    }
+
+    // ============================================================================================
+    // 2. MOON PHASE CALCULATIONS
+    // ============================================================================================
+
+    /**
+     * Computes the current Moon Phase, Age, Illumination Percentage, and Zodiac Sign for a given timestamp.
      *
-     * @param timestamp Epoch time in milliseconds (defaults to current time)
-     * @return [MoonPhaseData] detailing phase type, illumination %, age, phase angle, and glyph.
+     * @param timestamp Epoch timestamp in milliseconds (defaults to current system time).
+     * @return [MoonPhaseData] detailing phase type, illumination %, age in days, phase angle, and moon sign.
      */
     fun calculateMoonPhase(timestamp: Long = System.currentTimeMillis()): MoonPhaseData {
         val diffDays = (timestamp - EPOCH_NEW_MOON_MS) / MS_PER_DAY
@@ -84,10 +158,9 @@ object AstroCalculator {
         val phaseAngleRad = (moonAge / SYNODIC_MONTH_DAYS) * 2.0 * PI
         val phaseAngleDeg = Math.toDegrees(phaseAngleRad)
 
-        // Geometric illumination fraction: (1 - cos(angle)) / 2
+        // Geometric illumination fraction: (1 - cos(θ)) / 2
         val illuminationFraction = (1.0 - cos(phaseAngleRad)) / 2.0
         val illuminationPercent = (illuminationFraction * 100).roundToInt().coerceIn(0, 100)
-
         val isWaxing = moonAge < (SYNODIC_MONTH_DAYS / 2.0)
 
         val phaseType = when {
@@ -119,29 +192,12 @@ object AstroCalculator {
     }
 
     /**
-     * Overload for [calculateMoonPhase] accepting a [Date].
-     */
-    fun calculateMoonPhase(date: Date): MoonPhaseData = calculateMoonPhase(date.time)
-
-    /**
-     * Overload for [calculateMoonPhase] accepting a [Calendar].
-     */
-    fun calculateMoonPhase(calendar: Calendar): MoonPhaseData = calculateMoonPhase(calendar.timeInMillis)
-
-    /**
-     * Calculates the Moon's Tropical Zodiac Sign and Degree (0°-29°) based on approximate lunar ecliptic longitude.
+     * Calculates the Moon's Tropical Zodiac Sign and Degree (0°..29°).
      */
     fun calculateMoonSign(timestamp: Long = System.currentTimeMillis()): Pair<ZodiacSign, Int> {
-        val jd = (timestamp / MS_PER_DAY) + 2440587.5
-        val d = jd - 2451545.0 // Days since J2000.0 epoch
-
-        // Approximate mean longitude of the Moon in tropical ecliptic coordinates
-        var l = 218.316 + 13.176396 * d
-        l %= 360.0
-        if (l < 0) l += 360.0
-
-        val signIndex = (l / 30.0).toInt() % 12
-        val degree = (l % 30.0).toInt()
+        val longitude = calculateMoonEclipticLongitude(timestamp)
+        val signIndex = (longitude / 30.0).toInt() % 12
+        val degree = (longitude % 30.0).toInt()
 
         val signs = ZodiacSign.values()
         val moonSign = if (signIndex in signs.indices) signs[signIndex] else ZodiacSign.ARIES
@@ -149,11 +205,11 @@ object AstroCalculator {
     }
 
     // ============================================================================================
-    // SUN SIGN & SOLAR POSITION CALCULATIONS
+    // 3. SUN SIGN (ZODIAC) CALCULATIONS
     // ============================================================================================
 
     /**
-     * Calculates the Tropical Sun Sign and Zodiac degree for a given [Calendar].
+     * Computes the Sun's Tropical Zodiac Sign, degree, element, and modality for a given [Calendar].
      */
     fun calculateSunSign(calendar: Calendar): SunSignData {
         val month = calendar.get(Calendar.MONTH) + 1 // 1..12
@@ -191,14 +247,6 @@ object AstroCalculator {
     }
 
     /**
-     * Overload for [calculateSunSign] accepting a [Date].
-     */
-    fun calculateSunSign(date: Date): SunSignData {
-        val cal = Calendar.getInstance().apply { time = date }
-        return calculateSunSign(cal)
-    }
-
-    /**
      * Overload for [calculateSunSign] accepting a timestamp in milliseconds.
      */
     fun calculateSunSign(timestamp: Long = System.currentTimeMillis()): SunSignData {
@@ -207,34 +255,31 @@ object AstroCalculator {
     }
 
     // ============================================================================================
-    // SOLAR TIMES (SUNRISE, SUNSET, SOLAR NOON)
+    // 4. SOLAR EPHEMERIS TIMES (SUNRISE & SUNSET BASED ON GEOLOCATION)
     // ============================================================================================
 
     /**
-     * Calculates Sunrise, Sunset, Solar Noon, and Next Sunrise for a given date and geolocation coordinates.
-     * Uses official solar zenith (90°50' with atmospheric refraction).
+     * Calculates local Sunrise, Sunset, Solar Noon, and Next Sunrise for a given date and geolocation.
      *
      * @param calendar Target date
-     * @param latitude Geographic latitude in decimal degrees (-90.0 to 90.0)
-     * @param longitude Geographic longitude in decimal degrees (-180.0 to 180.0)
+     * @param latitude Observer latitude in decimal degrees
+     * @param longitude Observer longitude in decimal degrees
      */
     fun calculateSunTimes(
         calendar: Calendar,
         latitude: Double = DEFAULT_LATITUDE,
         longitude: Double = DEFAULT_LONGITUDE
     ): SolarTimes {
-        val sunrise = getSolarTimeForDate(calendar, latitude, longitude, isSunrise = true)
-        val sunset = getSolarTimeForDate(calendar, latitude, longitude, isSunrise = false)
+        val sunrise = calculateSolarCrossingTime(calendar, latitude, longitude, isSunrise = true)
+        val sunset = calculateSolarCrossingTime(calendar, latitude, longitude, isSunrise = false)
 
-        // Ensure sunset is chronologically after sunrise on this day
         if (sunset.timeInMillis <= sunrise.timeInMillis) {
             sunset.timeInMillis = sunrise.timeInMillis + (12 * 3600 * 1000L)
         }
 
         val tomorrow = (calendar.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-        val nextSunrise = getSolarTimeForDate(tomorrow, latitude, longitude, isSunrise = true)
+        val nextSunrise = calculateSolarCrossingTime(tomorrow, latitude, longitude, isSunrise = true)
 
-        // Solar noon is halfway between sunrise and sunset
         val noonMs = (sunrise.timeInMillis + sunset.timeInMillis) / 2
         val solarNoon = (calendar.clone() as Calendar).apply { timeInMillis = noonMs }
 
@@ -250,26 +295,14 @@ object AstroCalculator {
         )
     }
 
-    /**
-     * Overload for [calculateSunTimes] accepting a [Date].
-     */
-    fun calculateSunTimes(
-        date: Date,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): SolarTimes {
-        val cal = Calendar.getInstance().apply { time = date }
-        return calculateSunTimes(cal, latitude, longitude)
-    }
-
-    private fun getSolarTimeForDate(
+    private fun calculateSolarCrossingTime(
         cal: Calendar,
         lat: Double,
         lon: Double,
         isSunrise: Boolean
     ): Calendar {
         val dayOfYear = cal.get(Calendar.DAY_OF_YEAR)
-        val zenith = 90.8333 // Official civil zenith including atmospheric refraction
+        val zenith = OFFICIAL_ZENITH_DEGREES
 
         val lngHour = lon / 15.0
         val t = if (isSunrise) {
@@ -278,48 +311,31 @@ object AstroCalculator {
             dayOfYear + ((18.0 - lngHour) / 24.0)
         }
 
-        val m = (0.9856 * t) - 3.289
-        var l = m + (1.916 * sin(Math.toRadians(m))) + (0.020 * sin(Math.toRadians(2 * m))) + 282.634
-        l %= 360.0
-        if (l < 0) l += 360.0
+        val meanAnomaly = calculateSunMeanAnomaly(t)
+        val eclipticLongitude = calculateSunEclipticLongitude(meanAnomaly)
+        val rightAscensionHours = calculateSunRightAscensionHours(eclipticLongitude)
+        val declinationRad = calculateSunDeclinationRad(eclipticLongitude)
 
-        var ra = Math.toDegrees(atan2(0.91764 * sin(Math.toRadians(l)), cos(Math.toRadians(l))))
-        ra %= 360.0
-        if (ra < 0) ra += 360.0
-        ra /= 15.0 // RA in hours (0..24)
-
-        val sinDec = 0.39782 * sin(Math.toRadians(l))
-        val cosDec = cos(asin(sinDec))
+        val cosDec = cos(declinationRad)
+        val sinDec = sin(declinationRad)
 
         val cosH = (cos(Math.toRadians(zenith)) - (sinDec * sin(Math.toRadians(lat)))) /
                 (cosDec * cos(Math.toRadians(lat)))
 
-        val h = if (cosH > 1.0) {
-            0.0 // Polar night
-        } else if (cosH < -1.0) {
-            180.0 // Midnight sun
-        } else {
-            Math.toDegrees(acos(cosH.coerceIn(-1.0, 1.0)))
-        }
-        val hHours = h / 15.0
+        val hDeg = Math.toDegrees(acos(cosH.coerceIn(-1.0, 1.0)))
+        val hHours = hDeg / 15.0
 
-        // Local mean time (solar time) in hours
         val localMeanTime = if (isSunrise) {
-            (24.0 - hHours + ra - (0.06571 * t) - 6.622 + 48.0) % 24.0
+            (24.0 - hHours + rightAscensionHours - (0.06571 * t) - 6.622 + 48.0) % 24.0
         } else {
-            (hHours + ra - (0.06571 * t) - 6.622 + 48.0) % 24.0
+            (hHours + rightAscensionHours - (0.06571 * t) - 6.622 + 48.0) % 24.0
         }
 
-        // Convert solar time to local clock time using longitude and timezone offset
         val timeZone = cal.timeZone
         val offsetHours = timeZone.getOffset(cal.timeInMillis) / 3600000.0
-        // Universal Time
-        var ut = (localMeanTime - lngHour + 48.0) % 24.0
-        // Local civil clock time
+        val ut = (localMeanTime - lngHour + 48.0) % 24.0
         var localHours = (ut + offsetHours + 48.0) % 24.0
 
-        // If localHours calculation wrapped due to UTC conversion (e.g. sunset on Pacific time),
-        // ensure sunrise is in the morning (0..12) and sunset is in the evening (12..24)
         if (isSunrise && localHours >= 12.0) {
             localHours = (localHours + 12.0) % 24.0
         } else if (!isSunrise && localHours < 12.0) {
@@ -338,53 +354,16 @@ object AstroCalculator {
     }
 
     // ============================================================================================
-    // PLANETARY HOURS CALCULATIONS (CHALDEAN SYSTEM)
+    // 5. PLANETARY HOURS (CHALDEAN SYSTEM ANCHORED TO SUNRISE / SUNSET)
     // ============================================================================================
 
     /**
-     * Calculates the active Planetary Hour for a given date/time and geolocation.
+     * Calculates the currently active Planetary Hour based on Sunrise and Sunset times.
      *
-     * In the classical Chaldean system:
-     * - The astrological day begins at local sunrise.
-     * - The period from sunrise to sunset is divided into 12 equal diurnal hours.
-     * - The period from sunset to next sunrise is divided into 12 equal nocturnal hours.
-     * - The first hour of the day is ruled by the day's regent planet (Sunday=Sun, Monday=Moon, etc.).
-     * - Subsequent hours cycle continuously through the descending Chaldean order:
-     *   Saturn -> Jupiter -> Mars -> Sun -> Venus -> Mercury -> Moon -> Saturn...
-     *
-     * @param date Date and time of observation
-     * @param latitude Observer latitude
-     * @param longitude Observer longitude
-     * @return [PlanetaryHourInfo] containing hour number, ruling planet, day ruler, and progress.
-     */
-    fun calculatePlanetaryHour(
-        date: Date,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): PlanetaryHourInfo {
-        val cal = Calendar.getInstance().apply { time = date }
-        return calculatePlanetaryHour(cal, latitude, longitude)
-    }
-
-    /**
-     * Overload for [calculatePlanetaryHour] accepting a [Calendar].
-     */
-    fun calculatePlanetaryHour(
-        calendar: Calendar,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): PlanetaryHourInfo {
-        val solarTimes = calculateSunTimes(calendar, latitude, longitude)
-        return calculatePlanetaryHour(
-            calendar,
-            solarTimes.sunrise,
-            solarTimes.sunset,
-            solarTimes.nextSunrise
-        )
-    }
-
-    /**
-     * Calculates the planetary hour with pre-calculated sunrise/sunset anchors.
+     * @param now Current date and time
+     * @param sunrise Today's local sunrise
+     * @param sunset Today's local sunset
+     * @param nextSunrise Next day's local sunrise
      */
     fun calculatePlanetaryHour(
         now: Calendar,
@@ -399,7 +378,6 @@ object AstroCalculator {
 
         val isDay = nowMs in sunriseMs until sunsetMs
 
-        // The astrological day begins at sunrise. If before today's sunrise, belongs to previous day's ruler.
         val dayOfWeekCal = if (nowMs < sunriseMs) {
             (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
         } else {
@@ -412,7 +390,7 @@ object AstroCalculator {
         val hourLengthMs: Long
         val hourStartMs: Long
         val hourEndMs: Long
-        val hourIndex: Int // 0..11
+        val hourIndex: Int
 
         if (isDay) {
             val totalDayDurationMs = (sunsetMs - sunriseMs).coerceAtLeast(1)
@@ -422,7 +400,6 @@ object AstroCalculator {
             hourStartMs = sunriseMs + (hourIndex * hourLengthMs)
             hourEndMs = hourStartMs + hourLengthMs
         } else {
-            // Night hours
             val totalNightDurationMs = (nextSunriseMs - sunsetMs).coerceAtLeast(1)
             hourLengthMs = totalNightDurationMs / 12
 
@@ -432,7 +409,6 @@ object AstroCalculator {
                 hourStartMs = sunsetMs + (hourIndex * hourLengthMs)
                 hourEndMs = hourStartMs + hourLengthMs
             } else {
-                // Before sunrise: belongs to the second half of the previous night's 12 hours
                 val prevSunset = (sunset.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }.timeInMillis
                 val nightDuration = (sunriseMs - prevSunset).coerceAtLeast(1)
                 val prevHourLength = nightDuration / 12
@@ -443,7 +419,6 @@ object AstroCalculator {
             }
         }
 
-        // Planet ruling this hour: (DayRulerIndex + totalHoursSinceSunrise) % 7
         val totalOffsetFromSunrise = if (isDay) hourIndex else 12 + hourIndex
         val planetIndex = (dayRulerIndexInChaldean + totalOffsetFromSunrise) % chaldeanOrder.size
         val rulingPlanet = chaldeanOrder[planetIndex]
@@ -472,8 +447,19 @@ object AstroCalculator {
     }
 
     /**
-     * Calculates the entire 24-hour planetary hour schedule (12 day hours + 12 night hours) for a given date.
-     * Useful for scheduling meditation sessions, reflections, or viewing the daily celestial cycle.
+     * Calculates the active Planetary Hour directly from date and geolocation.
+     */
+    fun calculatePlanetaryHour(
+        calendar: Calendar,
+        latitude: Double = DEFAULT_LATITUDE,
+        longitude: Double = DEFAULT_LONGITUDE
+    ): PlanetaryHourInfo {
+        val solarTimes = calculateSunTimes(calendar, latitude, longitude)
+        return calculatePlanetaryHour(calendar, solarTimes.sunrise, solarTimes.sunset, solarTimes.nextSunrise)
+    }
+
+    /**
+     * Computes the complete 24 planetary hours schedule (12 day + 12 night) for a specific date and coordinates.
      */
     fun calculatePlanetaryHoursForDay(
         calendar: Calendar,
@@ -494,10 +480,9 @@ object AstroCalculator {
 
         val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
         val nowMs = calendar.timeInMillis
-
         val slots = mutableListOf<PlanetaryHourSlot>()
 
-        // 12 Day Hours
+        // 12 Diurnal Hours
         for (i in 0 until 12) {
             val startMs = sunriseMs + (i * dayHourLengthMs)
             val endMs = startMs + dayHourLengthMs
@@ -521,7 +506,7 @@ object AstroCalculator {
             )
         }
 
-        // 12 Night Hours
+        // 12 Nocturnal Hours
         for (i in 0 until 12) {
             val startMs = sunsetMs + (i * nightHourLengthMs)
             val endMs = startMs + nightHourLengthMs
@@ -546,155 +531,5 @@ object AstroCalculator {
         }
 
         return slots
-    }
-
-    /**
-     * Overload for [calculatePlanetaryHoursForDay] accepting a [Date].
-     */
-    fun calculatePlanetaryHoursForDay(
-        date: Date,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): List<PlanetaryHourSlot> {
-        val cal = Calendar.getInstance().apply { time = date }
-        return calculatePlanetaryHoursForDay(cal, latitude, longitude)
-    }
-
-    // ============================================================================================
-    // TATTWAS (VEDIC 24-MINUTE ELEMENTAL CYCLES)
-    // ============================================================================================
-
-    /**
-     * Tattwas: 5 elements cycling in 24-minute blocks every 2 hours from local sunrise.
-     * Order: Akasha (0-24m), Vayu (24-48m), Tejas (48-72m), Apas (72-96m), Prithvi (96-120m).
-     */
-    fun calculateTattwa(now: Calendar, sunrise: Calendar): TattwaInfo {
-        val nowMs = now.timeInMillis
-        val sunriseMs = sunrise.timeInMillis
-
-        var elapsedMs = (nowMs - sunriseMs)
-        if (elapsedMs < 0) elapsedMs += 86400000L // previous day sunrise reference
-
-        val elapsedMinutes = (elapsedMs / 60000.0)
-        val cyclePositionMinutes = elapsedMinutes % 120.0 // 2-hour cycle = 120 mins
-
-        val tattwas = listOf(
-            Tattwa.AKASHA,
-            Tattwa.VAYU,
-            Tattwa.TEJAS,
-            Tattwa.APAS,
-            Tattwa.PRITHVI
-        )
-
-        val mainTattwaIndex = (cyclePositionMinutes / 24.0).toInt().coerceIn(0, 4)
-        val currentTattwa = tattwas[mainTattwaIndex]
-
-        val startMinute = mainTattwaIndex * 24
-        val endMinute = startMinute + 24
-        val minuteInCurrentTattwa = cyclePositionMinutes - startMinute
-        val remainingMinutes = (24.0 - minuteInCurrentTattwa).roundToInt().coerceAtLeast(1)
-
-        // Sub-tattwa: 24 mins / 5 = 4.8 mins each
-        val subTattwaIndex = (minuteInCurrentTattwa / 4.8).toInt().coerceIn(0, 4)
-        val subTattwa = tattwas[subTattwaIndex]
-
-        val progressFraction = (minuteInCurrentTattwa / 24.0).toFloat().coerceIn(0f, 1f)
-
-        return TattwaInfo(
-            currentTattwa = currentTattwa,
-            subTattwa = subTattwa,
-            startMinute = startMinute,
-            endMinute = endMinute,
-            remainingMinutes = remainingMinutes,
-            progressFraction = progressFraction
-        )
-    }
-
-    /**
-     * Overload for [calculateTattwa] calculating sunrise automatically from geolocation.
-     */
-    fun calculateTattwa(
-        date: Date,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): TattwaInfo {
-        val cal = Calendar.getInstance().apply { time = date }
-        val solarTimes = calculateSunTimes(cal, latitude, longitude)
-        return calculateTattwa(cal, solarTimes.sunrise)
-    }
-
-    // ============================================================================================
-    // COMPREHENSIVE SNAPSHOT & CELESTIAL DATA AGGREGATORS
-    // ============================================================================================
-
-    /**
-     * Computes the complete [CelestialCalculationResult] encompassing Moon Phase, Sun Sign,
-     * Planetary Hour, Full Daily Planetary Schedule, Solar Times, and Tattwas for any given date and location.
-     */
-    fun calculateCelestialData(
-        date: Date = Date(),
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE,
-        locationName: String = DEFAULT_LOCATION_NAME
-    ): CelestialCalculationResult {
-        val cal = Calendar.getInstance().apply { time = date }
-        val timestamp = date.time
-
-        val moonData = calculateMoonPhase(timestamp)
-        val sunData = calculateSunSign(cal)
-        val solarTimes = calculateSunTimes(cal, latitude, longitude)
-        val planetaryHourInfo = calculatePlanetaryHour(cal, solarTimes.sunrise, solarTimes.sunset, solarTimes.nextSunrise)
-        val schedule = calculatePlanetaryHoursForDay(cal, latitude, longitude)
-        val tattwa = calculateTattwa(cal, solarTimes.sunrise)
-
-        val snapshot = CelestialSnapshot(
-            timestamp = timestamp,
-            moonPhase = moonData.phaseType,
-            moonIllumination = moonData.illuminationPercent,
-            moonAgeDays = moonData.ageDays,
-            moonSign = moonData.moonSign ?: ZodiacSign.ARIES,
-            moonSignDegree = moonData.moonSignDegree ?: 0,
-            sunSign = sunData.sign,
-            sunSignDegree = sunData.degree,
-            planetaryHour = planetaryHourInfo,
-            tattwaInfo = tattwa,
-            city = locationName,
-            latitude = latitude,
-            longitude = longitude,
-            sunriseFormatted = solarTimes.sunriseFormatted,
-            sunsetFormatted = solarTimes.sunsetFormatted
-        )
-
-        return CelestialCalculationResult(
-            timestamp = timestamp,
-            latitude = latitude,
-            longitude = longitude,
-            locationName = locationName,
-            moonPhase = moonData,
-            sunSign = sunData,
-            currentPlanetaryHour = planetaryHourInfo,
-            planetaryHourSchedule = schedule,
-            solarTimes = solarTimes,
-            tattwaInfo = tattwa,
-            snapshot = snapshot
-        )
-    }
-
-    /**
-     * Computes the [CelestialSnapshot] for backwards compatibility and integration with ViewModels.
-     */
-    fun calculateSnapshot(
-        timestamp: Long = System.currentTimeMillis(),
-        city: String = DEFAULT_LOCATION_NAME,
-        latitude: Double = DEFAULT_LATITUDE,
-        longitude: Double = DEFAULT_LONGITUDE
-    ): CelestialSnapshot {
-        val result = calculateCelestialData(
-            date = Date(timestamp),
-            latitude = latitude,
-            longitude = longitude,
-            locationName = city
-        )
-        return result.snapshot
     }
 }
